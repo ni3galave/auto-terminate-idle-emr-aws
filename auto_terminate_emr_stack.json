@@ -1,0 +1,194 @@
+{
+  "Description": "Sample CloudFormation template for creating an Auto termination EMR cluster",
+  "Parameters": {
+    "KeyName": {
+      "Default": "emr_dev",
+      "Description": "Name of an existing EC2 KeyPair to enable SSH to the instances",
+      "Type": "AWS::EC2::KeyPair::KeyName"
+    },
+    "SpotPrice": {
+      "Default": "0.033",
+      "Description": "Spot price (or use 0 for 'on demand' instance)",
+      "Type": "Number"
+    },
+    "AlarmName": {
+      "Default": "TerminateIDLE-EMRAlarm",
+      "Description": "Enter the name of the alarm",
+      "Type": "String"
+    },
+    "EvaluationPeriod": {
+      "Default": "1",
+      "Description": "M out of N - Input N Value",
+      "Type": "String"
+    },
+    "SNSSubscribeTopic": {
+      "Default": "arn:aws:sns:us-east-1:833211301896:TerminateEMRSNSTopic",
+      "Description": "ARN of the SNS Topic that triggers the lambda",
+      "Type": "String"
+    },
+    "EMRJobFlowRole": {
+      "Default": "Emr-Auto-Terminate-Resources-EMRJobFlowRole-TMGC88HMQ33N",
+      "Description": "Name of EMRJobFlowRole",
+      "Type": "String"
+    },
+    "EMRServiceRole": {
+      "Default": "Emr-Auto-Terminate-Resources-EMRServiceRole-KAPHFJFX8IYQ",
+      "Description": "Name of EMRServiceRole",
+      "Type": "String"
+    }
+  },
+  "Resources": {
+    "EMRInstanceProfile": {
+      "Properties": {
+        "Roles": [
+          {
+            "Ref": "EMRJobFlowRole"
+          }
+        ]
+      },
+      "Type": "AWS::IAM::InstanceProfile"
+    },
+    "EMRMonitorAlarm": {
+      "Properties": {
+        "AlarmActions": [{ "Ref" : "SNSSubscribeTopic" }],
+        "AlarmDescription": "Cloudwatch alarm to shutdown the idle EMR instance",
+        "AlarmName": "TerminateIDLE-EMRAlarm",
+        "ComparisonOperator": "LessThanOrEqualToThreshold",
+        "Dimensions": [
+          {
+            "Name": "JobFlowId",
+            "Value": {
+              "Ref": "EMRSampleCluster"
+            }
+          }
+        ],
+        "EvaluationPeriods": {
+          "Ref": "EvaluationPeriod"
+        },
+        "MetricName": "isEMRUsed",
+        "Namespace": "EMRShutdown/Cluster-Metric",
+        "Period": 300,
+        "Statistic": "Average",
+        "Threshold": "0"
+      },
+      "Type": "AWS::CloudWatch::Alarm"
+    },
+    "EMRSampleCluster": {
+      "Properties": {
+        "Applications": [
+          {
+            "Name": "Hadoop"
+          },
+          {
+            "Name": "Hive"
+          },
+          {
+            "Name": "Mahout"
+          },
+          {
+            "Name": "Pig"
+          },
+          {
+            "Name": "Spark"
+          }
+        ],
+        "AutoScalingRole": "EMR_AutoScaling_DefaultRole",
+        "Configurations": [
+          {
+            "Classification": "core-site",
+            "ConfigurationProperties": {
+              "hadoop.security.groups.cache.secs": "250"
+            }
+          },
+          {
+            "Classification": "mapred-site",
+            "ConfigurationProperties": {
+              "mapred.tasktracker.map.tasks.maximum": "2",
+              "mapreduce.map.sort.spill.percent": "90",
+              "mapreduce.tasktracker.reduce.tasks.maximum": "5"
+            }
+          },
+          {
+            "Classification": "hadoop-env",
+            "Configurations": [
+              {
+                "Classification": "export",
+                "ConfigurationProperties": {
+                  "HADOOP_DATANODE_HEAPSIZE": "2048"
+                }
+              }
+            ]
+          }
+        ],
+        "Instances": {
+          "CoreInstanceGroup": {
+            "EbsConfiguration": {
+              "EbsBlockDeviceConfigs": [
+                {
+                  "VolumeSpecification": {
+                    "SizeInGB": "10",
+                    "VolumeType": "gp2"
+                  },
+                  "VolumesPerInstance": "1"
+                }
+              ],
+              "EbsOptimized": true
+            },
+            "InstanceCount": "1",
+            "InstanceType": "m4.large",
+            "Market": "SPOT",
+            "Name": "Core Instance",
+            "BidPrice": {
+              "Ref": "SpotPrice"
+            }
+          },
+          "Ec2KeyName": {
+            "Ref": "KeyName"
+          },
+          "MasterInstanceGroup": {
+            "InstanceCount": "1",
+            "InstanceType": "m4.large",
+            "Market": "SPOT",
+            "Name": "Master Instance",
+            "BidPrice": {
+              "Ref": "SpotPrice"
+            }
+          }
+        },
+        "JobFlowRole": {
+          "Ref": "EMRInstanceProfile"
+        },
+        "Name": "EMR Sample Cluster test01",
+        "ReleaseLabel": "emr-5.26.0",
+        "Tags": [
+          {
+            "Key": "Name",
+            "Value": "EMR Sample Cluster"
+          }
+        ],
+        "ServiceRole": {
+          "Ref": "EMRServiceRole"
+        },
+        "VisibleToAllUsers": true
+      },
+      "Type": "AWS::EMR::Cluster"
+    },
+    "TestStep": {
+      "Properties": {
+        "ActionOnFailure": "CONTINUE",
+        "HadoopJarStep": {
+          "Args": [
+            "s3://emr-shutdown-blogartifacts/schedule_script.sh",
+            "s3://emr-shutdown-blogartifacts/pushShutDownMetrin.sh"
+          ],
+          "Jar": "s3://us-east-1.elasticmapreduce/libs/script-runner/script-runner.jar"
+        },
+        "JobFlowId": {
+          "Ref": "EMRSampleCluster"
+        },
+        "Name": "TestStep"
+      },
+      "Type": "AWS::EMR::Step"
+    }
+  }
+}
